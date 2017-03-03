@@ -168,7 +168,6 @@ $(APP_AR): $(OBJ)
 	$(Q) $(AR) cru $@ $(OBJ)
 
 clean:
-	$(Q) make -C clean
 	$(Q) rm -f $(APP_AR)
 	$(Q) rm -f $(TARGET_OUT)
 	$(Q) find $(BUILD_BASE) -type f | xargs rm -f
