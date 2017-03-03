@@ -28,5 +28,8 @@
 *.out
 *.app
 
-credentials.h
+include/credentials.h
+
+firmware
+ldscript_memspecific.ld
 
