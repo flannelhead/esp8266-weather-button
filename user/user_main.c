@@ -18,11 +18,25 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include <osapi.h>
 #include <ets_sys.h>
+#include <user_interface.h>
 #include <driver/uart.h>
+
+#include "credentials.h"
+
+void ICACHE_FLASH_ATTR wifi_init(void) {
+    wifi_set_opmode(STATION_MODE);
+    struct station_config conf;
+    conf.bssid_set = 0;
+    os_memcpy(&conf.ssid, WIFI_SSID, os_strlen(WIFI_SSID) + 1);
+    os_memcpy(&conf.password, WIFI_PWD, os_strlen(WIFI_PWD) + 1);
+    wifi_station_set_config(&conf);
+}
 
 void ICACHE_FLASH_ATTR user_init(void) {
     system_update_cpu_freq(80);
     uart_init(BIT_RATE_115200, BIT_RATE_115200);
+
+    wifi_init();
 
     os_printf("Hello World!\n");
 }
