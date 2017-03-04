@@ -44,19 +44,19 @@ APPGEN		?= $(SDK_BASE)/tools/gen_appbin.py
 TARGET		= esp8266_binary
 
 # which modules (subdirectories) of the project to include in compiling
-MODULES		= user lib
-EXTRA_INCDIR	= include $(SDK_BASE)/driver_lib/include
+MODULES		= user lib u8g2
+EXTRA_INCDIR	= include $(SDK_BASE)/driver_lib/include u8g2
 
 # libraries used in this project, mainly provided by the SDK
 LIBS		= c gcc hal phy pp net80211 wpa main lwip crypto driver
 
 # compiler flags using during compilation of source files
 CFLAGS		= -Os -ggdb -std=gnu99 -Wpointer-arith -Wundef -Wall -Wl,-EL -fno-inline-functions \
-		-nostdlib -mlongcalls -mtext-section-literals  -D__ets__ -DICACHE_FLASH \
-		-Wno-address
+		-nostdlib -mlongcalls -mtext-section-literals  -D__ets__ \
+		-Wno-address -DESP8266 -ffunction-sections -fdata-sections
 
 # linker flags used to generate the main object file
-LDFLAGS		= -nostdlib -Wl,--no-check-sections -u call_user_start -Wl,-static
+LDFLAGS		= -nostdlib -Wl,--no-check-sections -u call_user_start -Wl,--gc-sections -Wl,-static
 
 
 # various paths from the SDK used in this project
@@ -148,6 +148,7 @@ define compile-objects
 $1/%.o: %.c
 	$(vecho) "CC $$<"
 	$(Q) $(CC) $(INCDIR) $(MODULE_INCDIR) $(EXTRA_INCDIR) $(SDK_INCDIR) $(CFLAGS)  -c $$< -o $$@
+	$(Q) $(OBJCOPY) --rename-section .text=.irom.text --rename-section .literal=.irom.literal $$@
 
 $1/%.o: %.S
 	$(vecho) "CC $$<"
