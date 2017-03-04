@@ -8,5 +8,5 @@ The [u8g2](https://github.com/olikraus/u8g2) graphics library by olikraus is inc
 
 ## License
 
-The code is released undex GPLv3. See the LICENSE file for details.
+The code is released under GPLv3. See the LICENSE file for details.
 
