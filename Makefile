@@ -124,7 +124,8 @@ include Makefile.$(OUTPUT_TYPE)
 #Add all prefixes to paths
 LIBS		:= $(addprefix -l,$(LIBS))
 ifeq ("$(LD_SCRIPT_USR1)", "")
-LD_SCRIPT	:= $(addprefix -T$(SDK_BASE)/$(SDK_LDDIR)/,$(LD_SCRIPT))
+# LD_SCRIPT	:= $(addprefix -T$(SDK_BASE)/$(SDK_LDDIR)/,$(LD_SCRIPT))
+LD_SCRIPT	:= $(addprefix -T,$(LD_SCRIPT))
 else
 LD_SCRIPT_USR1	:= $(addprefix -T$(SDK_BASE)/$(SDK_LDDIR)/,$(LD_SCRIPT_USR1))
 LD_SCRIPT_USR2	:= $(addprefix -T$(SDK_BASE)/$(SDK_LDDIR)/,$(LD_SCRIPT_USR2))
@@ -148,7 +149,6 @@ define compile-objects
 $1/%.o: %.c
 	$(vecho) "CC $$<"
 	$(Q) $(CC) $(INCDIR) $(MODULE_INCDIR) $(EXTRA_INCDIR) $(SDK_INCDIR) $(CFLAGS)  -c $$< -o $$@
-	$(Q) $(OBJCOPY) --rename-section .text=.irom.text --rename-section .literal=.irom.literal $$@
 
 $1/%.o: %.S
 	$(vecho) "CC $$<"

@@ -2,9 +2,7 @@
 #the espfs combined into the flash binary.
 
 # linker script used for the linker step
-LD_SCRIPT	= eagle.app.v6.ld
-# Extra script to tell the linker the correct irom0 memory available
-EXTRA_LD_SCRIPTS = ldscript_memspecific.ld
+LD_SCRIPT	= eagle.app.v6.custom.ld
 
 TARGET_OUT	:= $(addprefix $(BUILD_BASE)/,$(TARGET).out)
 
@@ -20,7 +18,7 @@ ldscript_memspecific.ld:
 
 $(TARGET_OUT): $(APP_AR) $(EXTRA_LD_SCRIPTS)
 	$(vecho) "LD $@"
-	$(Q) $(LD) -L$(SDK_LIBDIR) $(LD_SCRIPT) $(EXTRA_LD_SCRIPTS) $(LDFLAGS) -Wl,--start-group $(LIBS) $(APP_AR) -Wl,--end-group -o $@ 
+	$(Q) $(LD) -L$(SDK_LIBDIR) -Tldscript_memspecific.ld $(LD_SCRIPT) $(EXTRA_LD_SCRIPTS) $(LDFLAGS) -Wl,--start-group $(LIBS) $(APP_AR) -Wl,--end-group -o $@ 
 
 
 $(FW_BASE): $(TARGET_OUT)
