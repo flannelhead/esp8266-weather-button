@@ -84,7 +84,16 @@ uint8_t u8x8_byte_esp8266_hw_spi(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int, voi
         case U8X8_MSG_BYTE_SEND:
             data = (uint8_t *)arg_ptr;
             while( arg_int > 0 ) {
-                spi_mast_byte_write(HSPI, *data);
+                while (READ_PERI_REG(SPI_CMD(HSPI)) & SPI_USR);
+                CLEAR_PERI_REG_MASK(SPI_USER(HSPI), SPI_USR_MOSI | SPI_USR_MISO);
+
+                WRITE_PERI_REG(SPI_USER2(HSPI),
+                    ((7 & SPI_USR_COMMAND_BITLEN) << SPI_USR_COMMAND_BITLEN_S) |
+                    ((uint32)*data));
+
+                SET_PERI_REG_MASK(SPI_CMD(HSPI), SPI_USR);
+                while (READ_PERI_REG(SPI_CMD(HSPI)) & SPI_USR);
+
                 data++;
                 arg_int--;
             }
