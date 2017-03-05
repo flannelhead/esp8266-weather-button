@@ -39,10 +39,11 @@ void compute(os_event_t *e) {
     os_printf("%lu\n", new_time - time);
     time = new_time;
 
-    uint32_t x = new_time * 128 / 500000;
+    uint32_t x = new_time * 128 / 2000000;
 
     u8g2_ClearBuffer(&u8g2);
-    u8g2_DrawCircle(&u8g2, x, 32, 10, U8G2_DRAW_ALL);
+    u8g2_SetFont(&u8g2, u8g2_font_profont12_tf);
+    u8g2_DrawStr(&u8g2, x, 20, "Hello World!");
     u8g2_SendBuffer(&u8g2);
 }
 
@@ -52,11 +53,6 @@ void oled_init(void) {
         u8x8_gpio_and_delay_esp8266);  // init u8g2 structure
     u8g2_InitDisplay(&u8g2); // send init sequence to the display, display is in sleep mode after this,
     u8g2_SetPowerSave(&u8g2, 0); // wake up display
-    u8g2_SetContrast(&u8g2, 255);
-
-    u8g2_ClearBuffer(&u8g2);
-    u8g2_DrawCircle(&u8g2, 10, 10, 10, U8G2_DRAW_ALL);
-    u8g2_SendBuffer(&u8g2);
 }
 
 void wifi_init(void) {
