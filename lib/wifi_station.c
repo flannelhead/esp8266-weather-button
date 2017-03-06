@@ -3,6 +3,7 @@
 #include <osapi.h>
 #include <ets_sys.h>
 #include <user_interface.h>
+#include <espmissingincludes.h>
 
 static const uint32_t IP_POLL_INTERVAL_MS = 100;
 

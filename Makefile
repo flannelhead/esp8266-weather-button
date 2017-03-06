@@ -44,11 +44,11 @@ APPGEN		?= $(SDK_BASE)/tools/gen_appbin.py
 TARGET		= esp8266_binary
 
 # which modules (subdirectories) of the project to include in compiling
-MODULES		= user lib u8g2
-EXTRA_INCDIR	= include $(SDK_BASE)/driver_lib/include u8g2
+MODULES		= user lib u8g2 esphttpclient
+EXTRA_INCDIR	= include $(SDK_BASE)/driver_lib/include u8g2 esphttpclient
 
 # libraries used in this project, mainly provided by the SDK
-LIBS		= c gcc hal phy pp net80211 wpa main lwip crypto driver
+LIBS		= c gcc hal phy pp net80211 wpa main lwip crypto ssl driver
 
 # compiler flags using during compilation of source files
 CFLAGS		= -Os -ggdb -std=gnu99 -Wpointer-arith -Wundef -Wall -Wl,-EL -fno-inline-functions \

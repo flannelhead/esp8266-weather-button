@@ -1,9 +1,10 @@
 #include "u8g2_esp8266_hal.h"
 
-#include "ets_sys.h"
-#include "osapi.h"
-#include "driver/spi.h"
-#include "driver/spi_interface.h"
+#include <ets_sys.h>
+#include <osapi.h>
+#include <driver/spi.h>
+#include <driver/spi_interface.h>
+#include <espmissingincludes.h>
 
 void set_gpio(uint8_t gpio_num, uint8_t value) {
     if (value) {
