@@ -220,31 +220,30 @@ static void ICACHE_FLASH_ATTR receive_callback(void * arg, char * buf, unsigned 
 	}
 
 #ifdef INCREMENTAL_PARSING
-	int http_status = 0;
-	if (req->parse_state == PS_PARSING_HEADER) {
-		size_t new_size = req->buffer_size + len;
-		if (new_size > BUFFER_SIZE_MAX) {
-			request_disconnect(conn, req->secure);
-			return;
-		}
-		os_memcpy(req->buffer + req->buffer_size - 1, buf, len);
-		req->buffer[new_size - 1] = '\0';
-		req->buffer_size = new_size;
+	size_t new_size = req->buffer_size + len;
+	if (new_size > BUFFER_SIZE_MAX) {
+		request_disconnect(conn, req->secure);
+		return;
+	}
+	os_memcpy(req->buffer + req->buffer_size - 1, buf, len);
+	req->buffer[new_size - 1] = '\0';
+	req->buffer_size = new_size;
 
+	if (req->parse_state == PS_PARSING_HEADER) {
 		char *header_end = os_strstr(req->buffer, "\r\n\r\n");
 		if (header_end == NULL) {
 			// Not ready to parse the header yet
-			os_printf("Received partial header\n");
+			PRINTF("partial header\n");
 			return;
 		}
 		const char * version10 = "HTTP/1.0 ";
 		const char * version11 = "HTTP/1.1 ";
 		if (os_strncmp(req->buffer, version10, strlen(version10)) != 0
 		 && os_strncmp(req->buffer, version11, strlen(version11)) != 0) {
-			os_printf("Invalid version in %s\n", req->buffer);
+			os_printf("Invalid HTTP version\n");
 			request_disconnect(conn, req->secure);
 		} else {
-			http_status = atoi(req->buffer + strlen(version10));
+			int http_status = atoi(req->buffer + strlen(version10));
 
 			if (os_strstr(req->buffer, "Transfer-Encoding: chunked") != NULL) {
 				req->parse_state = PS_PARSING_CHUNKED_BODY;
@@ -258,39 +257,49 @@ static void ICACHE_FLASH_ATTR receive_callback(void * arg, char * buf, unsigned 
 			}
 
 			char *body_start = header_end + 4;
-			int body_offset = body_start - buf;
-			if (body_offset < len) {
-				len -= body_offset;
-				buf = body_start;
+			int body_offset = body_start - req->buffer;
+			if (body_offset < req->buffer_size) {
+				req->buffer_size -= body_offset;
+				os_memmove(req->buffer, body_start, req->buffer_size);
+				req->buffer[req->buffer_size - 1] = '\0';
 			} else {
-				len = 0;
-				buf = NULL;
+				req->buffer_size = 1;
+				req->buffer[0] = '\0';
 			}
 		}
 	}
 
-	if (buf == NULL || len == 0) {
+	if (req->user_callback == NULL) {
 		return;
 	}
 
-	if (len > 0) {
-		if (req->user_callback != NULL) {
-			req->user_callback(buf, HTTP_STATUS_CONTINUE, NULL, len);
-		}
+	if (0) { //req->parse_state == PS_PARSING_CHUNKED_BODY) {
+		/*if (req->current_chunk_size == 0) {
+			char *crlf_pos = os_strstr(buf, "\r\n");
+			if (crlf_pos != NULL) {
+				req->current_chunk_size 
+			}
+		}*/
+		/*do
+		{
+			//[chunk-size]
+			i = esp_strtol(src, (char **) NULL, 16);
+			PRINTF("Chunk Size:%d\r\n", i);
+			if (i <= 0) 
+				break;
+			//[chunk-size-end-ptr]
+			src = (char *)os_strstr(src, "\r\n") + 2;
+			//[chunk-data]
+			os_memmove(&chunked[dst], src, i);
+			src += i + 2;  CRLF
+			dst += i;
+		} while (src < end); */
+	} else { // if (req->parse_state == PS_PARSING_BODY) {
+		req->user_callback(req->buffer, HTTP_STATUS_CONTINUE, NULL,
+			req->buffer_size);
+		req->buffer[0] = '\0';
+		req->buffer_size = 1;
 	}
-
-	req->buffer_size = 0;
-	req->buffer[0] = '\0';
-
-	/*
-	if (http_status == 0) {
-		http_status = HTTP_STATUS_CONTINUE;
-	}
-	if (req->parse_state == PS_PARSING_CHUNKED_BODY) {
-
-	} else if (req->parse_state == PS_PARSING_BODY) {
-		req->user_callback(buf
-	}*/
 #else
 	// Let's do the equivalent of a realloc().
 	const int new_size = req->buffer_size + len;
@@ -497,6 +506,7 @@ void ICACHE_FLASH_ATTR http_raw_request(const char * hostname, int port, bool se
 	req->buffer[0] = '\0'; // Empty string.
 	req->user_callback = user_callback;
 	req->parse_state = PS_PARSING_HEADER;
+	req->current_chunk_size = 0;
 
 	ip_addr_t addr;
 	err_t error = espconn_gethostbyname((struct espconn *)req, // It seems we don't need a real espconn pointer here.
