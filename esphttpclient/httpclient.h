@@ -21,6 +21,7 @@
 // The advantage of incremental parsing is the ability to receive responses
 // that are too large to be buffered in memory.
 #define INCREMENTAL_PARSING        true
+#define HTTP_STATUS_CONTINUE       -2
 
 /*
  * "full_response" is a string containing all response headers and the response body.

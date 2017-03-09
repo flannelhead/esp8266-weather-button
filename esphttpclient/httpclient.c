@@ -41,6 +41,7 @@ typedef struct {
 	int buffer_size;
 	bool secure;
 	header_parse_state parse_state;
+	int current_chunk_size;
 	http_callback user_callback;
 } request_args;
 
@@ -219,6 +220,7 @@ static void ICACHE_FLASH_ATTR receive_callback(void * arg, char * buf, unsigned 
 	}
 
 #ifdef INCREMENTAL_PARSING
+	int http_status = 0;
 	if (req->parse_state == PS_PARSING_HEADER) {
 		size_t new_size = req->buffer_size + len;
 		if (new_size > BUFFER_SIZE_MAX) {
@@ -229,7 +231,7 @@ static void ICACHE_FLASH_ATTR receive_callback(void * arg, char * buf, unsigned 
 		req->buffer[new_size - 1] = '\0';
 		req->buffer_size = new_size;
 
-		const char *header_end = os_strstr(req->buffer, "\r\n\r\n");
+		char *header_end = os_strstr(req->buffer, "\r\n\r\n");
 		if (header_end == NULL) {
 			// Not ready to parse the header yet
 			os_printf("Received partial header\n");
@@ -242,42 +244,53 @@ static void ICACHE_FLASH_ATTR receive_callback(void * arg, char * buf, unsigned 
 			os_printf("Invalid version in %s\n", req->buffer);
 			request_disconnect(conn, req->secure);
 		} else {
-			int http_status = atoi(req->buffer + strlen(version10));
+			http_status = atoi(req->buffer + strlen(version10));
 
-			os_printf("HTTP status: %d\n", http_status);
 			if (os_strstr(req->buffer, "Transfer-Encoding: chunked") != NULL) {
-				os_printf("reponse is chunked\n");
 				req->parse_state = PS_PARSING_CHUNKED_BODY;
 			} else {
-				os_printf("reponse is not chunked\n");
 				req->parse_state = PS_PARSING_BODY;
 			}
 
-			req->buffer_size = 0;
-			req->buffer[0] = '\0';
+			*header_end = '\0';
+			if (req->user_callback != NULL) {
+				req->user_callback(NULL, http_status, req->buffer, 0);
+			}
 
-			char *body_start = os_strstr(buf, "\r\n\r\n");
-			if (body_start != NULL && body_start - buf > 4) {
+			char *body_start = header_end + 4;
+			int body_offset = body_start - buf;
+			if (body_offset < len) {
+				len -= body_offset;
 				buf = body_start;
-				len -= body_start - buf - 4;
 			} else {
-				buf = NULL;
 				len = 0;
+				buf = NULL;
 			}
 		}
 	}
 
-	os_memcpy(req->buffer, buf, len);
-	req->buffer[len] = '\0';
-	if (len > 0) {
-		os_printf("Response body:\n%s\n", buf);
+	if (buf == NULL || len == 0) {
+		return;
 	}
 
+	if (len > 0) {
+		if (req->user_callback != NULL) {
+			req->user_callback(buf, HTTP_STATUS_CONTINUE, NULL, len);
+		}
+	}
+
+	req->buffer_size = 0;
+	req->buffer[0] = '\0';
+
+	/*
+	if (http_status == 0) {
+		http_status = HTTP_STATUS_CONTINUE;
+	}
 	if (req->parse_state == PS_PARSING_CHUNKED_BODY) {
 
 	} else if (req->parse_state == PS_PARSING_BODY) {
-
-	}
+		req->user_callback(buf
+	}*/
 #else
 	// Let's do the equivalent of a realloc().
 	const int new_size = req->buffer_size + len;
