@@ -18,7 +18,7 @@
 
 
 // Debug output.
-#if 1
+#if 0
 #define PRINTF(...) os_printf(__VA_ARGS__)
 #else
 #define PRINTF(...)
@@ -39,11 +39,11 @@ typedef struct {
 	char * hostname;
 	char * buffer;
 	int buffer_size;
-	int buffer_allocated_size;
 	bool secure;
-	header_parse_state parse_state;
-	int current_chunk_size;
 	http_callback user_callback;
+	int current_chunk_size;
+	int buffer_allocated_size;
+	header_parse_state parse_state;
 	bool streaming;
 } request_args;
 
@@ -719,6 +719,19 @@ void ICACHE_FLASH_ATTR http_callback_example(char * response_body, int http_stat
 		os_printf("strlen(headers)=%d\n", strlen(response_headers));
 		os_printf("body_size=%d\n", body_size);
 		os_printf("body=%s<EOF>\n", response_body); // FIXME: this does not handle binary data.
+	}
+}
+
+void ICACHE_FLASH_ATTR http_callback_example_streaming(char * response_body, int http_status, char * response_headers, int body_size)
+{
+	if (http_status > 0 && response_headers != NULL) {
+		os_printf("Received HTTP response with status %d and headers:\n%s\n",
+			http_status, response_headers);
+	} else if (http_status == HTTP_STATUS_BODY) {
+		os_printf("Received a part of the response body:\n%s\n",
+			response_body);
+	} else if (http_status == HTTP_STATUS_DISCONNECT) {
+		os_printf("The response has ended.\n");
 	}
 }
 
