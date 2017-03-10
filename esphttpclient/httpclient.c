@@ -230,7 +230,7 @@ static void ICACHE_FLASH_ATTR receive_callback(void * arg, char * buf, unsigned 
 	req->buffer_size = new_size;
 
 	if (req->parse_state == PS_PARSING_HEADER) {
-		char *header_end = os_strstr(req->buffer, "\r\n\r\n");
+		char *header_end = os_strstr(req->buffer, "\r\n\r\n") + 2;
 		if (header_end == NULL) {
 			// Not ready to parse the header yet
 			PRINTF("partial header\n");
@@ -255,13 +255,17 @@ static void ICACHE_FLASH_ATTR receive_callback(void * arg, char * buf, unsigned 
 			if (req->user_callback != NULL) {
 				req->user_callback(NULL, http_status, req->buffer, 0);
 			}
+			*header_end = '\r';
 
-			char *body_start = header_end + 4;
+			/* In the case of a chunked body, leave the last CRLF in.
+			 * This way the parsing loop can just look for the
+			 * \r\nCHUNK SIZE\r\n boundary every time. */
+			char *body_start = req->parse_state == PS_PARSING_CHUNKED_BODY ?
+				header_end : header_end + 2;
 			int body_offset = body_start - req->buffer;
 			if (body_offset < req->buffer_size) {
 				req->buffer_size -= body_offset;
 				os_memmove(req->buffer, body_start, req->buffer_size);
-				req->buffer[req->buffer_size - 1] = '\0';
 			} else {
 				req->buffer_size = 1;
 				req->buffer[0] = '\0';
@@ -273,28 +277,45 @@ static void ICACHE_FLASH_ATTR receive_callback(void * arg, char * buf, unsigned 
 		return;
 	}
 
-	if (0) { //req->parse_state == PS_PARSING_CHUNKED_BODY) {
-		/*if (req->current_chunk_size == 0) {
-			char *crlf_pos = os_strstr(buf, "\r\n");
-			if (crlf_pos != NULL) {
-				req->current_chunk_size 
+	if (req->parse_state == PS_PARSING_CHUNKED_BODY) {
+		char *read_ptr = req->buffer;
+		char *buffer_end = req->buffer + req->buffer_size - 1;  /* Ignore trailing zero */
+		do {
+			if (req->current_chunk_size == 0) {
+				char *crlf_pos_1 = os_strstr(read_ptr, "\r\n");
+				char *crlf_pos_2 = NULL;
+				if (crlf_pos_1 != NULL &&
+					(crlf_pos_2 = os_strstr(crlf_pos_1 + 2, "\r\n"))) {
+					req->current_chunk_size =
+						esp_strtol(crlf_pos_1 + 2, (char **)NULL, 16);
+					read_ptr = crlf_pos_2 + 2;
+				} else { break; }
 			}
-		}*/
-		/*do
-		{
-			//[chunk-size]
-			i = esp_strtol(src, (char **) NULL, 16);
-			PRINTF("Chunk Size:%d\r\n", i);
-			if (i <= 0) 
-				break;
-			//[chunk-size-end-ptr]
-			src = (char *)os_strstr(src, "\r\n") + 2;
-			//[chunk-data]
-			os_memmove(&chunked[dst], src, i);
-			src += i + 2;  CRLF
-			dst += i;
-		} while (src < end); */
-	} else { // if (req->parse_state == PS_PARSING_BODY) {
+
+			char *read_end = read_ptr + req->current_chunk_size;
+			if (read_end > buffer_end) {
+				read_end = buffer_end;
+			}
+			size_t read_size = read_end - read_ptr;
+			if (read_size > 0) {
+				/* Null terminate the current block for convenience */
+				char tmp = *read_end;
+				*read_end = '\0';
+				req->user_callback(read_ptr, HTTP_STATUS_CONTINUE, NULL,
+					read_size + 1);
+				*read_end = tmp;
+			}
+			req->current_chunk_size -= read_size;
+			read_ptr += read_size;
+		} while (read_ptr < buffer_end);
+
+		int leftover_size = buffer_end - read_ptr;
+		if (leftover_size < 0) {
+			leftover_size = 0;
+		}
+		os_memmove(req->buffer, read_ptr, leftover_size + 1);
+		req->buffer_size = leftover_size + 1;
+	} else if (req->parse_state == PS_PARSING_BODY) {
 		req->user_callback(req->buffer, HTTP_STATUS_CONTINUE, NULL,
 			req->buffer_size);
 		req->buffer[0] = '\0';
@@ -391,6 +412,11 @@ static void ICACHE_FLASH_ATTR disconnect_callback(void * arg)
 	if(conn->reverse != NULL) {
 		request_args * req = (request_args *)conn->reverse;
 		int http_status = -1;
+#ifdef INCREMENTAL_PARSING
+		if (req->user_callback != NULL) {
+			req->user_callback(NULL, http_status, NULL, 0);
+		}
+#else
 		int body_size = 0;
 		char * body = "";
 		if (req->buffer == NULL) {
@@ -398,7 +424,6 @@ static void ICACHE_FLASH_ATTR disconnect_callback(void * arg)
 		}
 		else if (req->buffer[0] != '\0') {
 			// FIXME: make sure this is not a partial response, using the Content-Length header.
-			/*
 			const char * version10 = "HTTP/1.0 ";
 			const char * version11 = "HTTP/1.1 ";
 			if (os_strncmp(req->buffer, version10, strlen(version10)) != 0
@@ -408,7 +433,7 @@ static void ICACHE_FLASH_ATTR disconnect_callback(void * arg)
 			else {
 				http_status = atoi(req->buffer + strlen(version10));
 				/* find body and zero terminate headers */
-				/*body = (char *)os_strstr(req->buffer, "\r\n\r\n") + 2;
+				body = (char *)os_strstr(req->buffer, "\r\n\r\n") + 2;
 				*body++ = '\0';
 				*body++ = '\0';
 
@@ -418,13 +443,13 @@ static void ICACHE_FLASH_ATTR disconnect_callback(void * arg)
 				{
 					body_size = chunked_decode(body, body_size);
 				}
-			}*/
-			
+			}
 		}
 
 		if (req->user_callback != NULL) { // Callback is optional.
 			req->user_callback(body, http_status, req->buffer, body_size);
 		}
+#endif
 
 		os_free(req->buffer);
 		os_free(req->hostname);
