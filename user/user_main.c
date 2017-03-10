@@ -30,6 +30,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "wifi_station.h"
 
 #include "credentials.h"
+#include "my_config.h"
 
 #define CONNECTION_TIMEOUT 10000
 #define DATA_FETCH_TIMEOUT 10000
@@ -69,6 +70,7 @@ void go_to_sleep(void) {
     os_printf("Going to sleep\n");
 }
 
+char owmap_query[128];
 void wifi_connect_cb(bool connected) {
     if (connected) {
         os_printf("Connection succeeded\n");
@@ -77,7 +79,11 @@ void wifi_connect_cb(bool connected) {
         os_timer_setfn(&timeout_timer, (os_timer_func_t *)go_to_sleep, NULL);
         os_timer_arm(&timeout_timer, DATA_FETCH_TIMEOUT, false);
 
-        http_get_streaming("http://example.com", "", http_get_callback);  // Example domain for testing for now - this sends chunked responses
+        os_sprintf(owmap_query,
+            "http://api.openweathermap.org/data/2.5/forecast?id=%s&appid=%s&units=metric",
+            OWMAP_CITY_ID, OWMAP_API_KEY);
+
+        http_get_streaming(owmap_query, "", http_get_callback);  // Example domain for testing for now - this sends chunked responses
     } else {
         os_printf("Connection failed\n");
         go_to_sleep();
