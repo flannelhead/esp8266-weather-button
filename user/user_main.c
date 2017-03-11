@@ -25,6 +25,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "u8g2.h"
 #include "u8g2_esp8266_hal.h"
 
+#include "jsmn.h"
+
 #include "httpclient.h"
 
 #include "wifi_station.h"
@@ -35,9 +37,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define CONNECTION_TIMEOUT 10000
 #define DATA_FETCH_TIMEOUT 10000
 
+#define SLEEP_INTERVAL 5000
+
 os_timer_t timeout_timer;
 
 u8g2_t u8g2;
+jsmn_parser parser;
 
 void oled_init(void) {
     u8g2_Setup_ssd1306_128x64_noname_f(&u8g2, U8G2_R2,
@@ -53,6 +58,44 @@ void oled_init(void) {
     u8g2_SendBuffer(&u8g2);
 }
 
+void start_arr(void) {
+    os_printf("Array started\n");
+}
+void end_arr(void) {
+    os_printf("Array ended\n");
+}
+void start_obj(void) {
+    os_printf("Object started\n");
+}
+void end_obj(void) {
+    os_printf("Object ended\n");
+}
+void obj_key(const char *key, size_t key_len) {
+    os_printf("Object key: %s\n", key);
+}
+void str(const char *value, size_t len) {
+    os_printf("String: %s\n", value);
+}
+void primitive(const char *value, size_t len) {
+    os_printf("Primitive: %s\n", value);
+}
+
+jsmn_callbacks_t cbs = {
+    start_arr,
+    end_arr,
+    start_obj,
+    end_obj,
+    obj_key,
+    str,
+    primitive
+};
+
+void go_to_sleep(void) {
+    os_printf("Going to sleep\n");
+    u8g2_SetPowerSave(&u8g2, 1); // put display to sleep
+    system_deep_sleep(1000 * SLEEP_INTERVAL);
+}
+
 void http_get_callback(char * response_body, int http_status,
     char * response_headers, int body_size) {
     os_printf("HTTP status %d\n", http_status);
@@ -62,12 +105,15 @@ void http_get_callback(char * response_body, int http_status,
     }
 
     if (response_body != NULL) {
-        os_printf("Body:\n%s\n", response_body);
+        char ch;
+        while ((ch = *(response_body++)) != '\0') {
+            jsmn_parse(&parser, ch);
+        }
     }
-}
 
-void go_to_sleep(void) {
-    os_printf("Going to sleep\n");
+    if (http_status == HTTP_STATUS_DISCONNECT) {
+        go_to_sleep();
+    }
 }
 
 char owmap_query[128];
@@ -95,6 +141,8 @@ void user_init(void) {
     uart_init(BIT_RATE_115200, BIT_RATE_115200);
 
     oled_init();
+
+    jsmn_init(&parser, &cbs);
 
     wifi_station_init(WIFI_SSID, WIFI_PWD, wifi_connect_cb, CONNECTION_TIMEOUT);
 }
