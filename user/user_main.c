@@ -79,11 +79,21 @@ void oled_draw_forecast(int x, int y, const weather_t *forecast,
     u8g2_DrawUTF8(&u8g2, x + dx, y + 52, buf);
 }
 
-void oled_draw_forecasts(const weather_t *forecasts) {
+void oled_draw_forecasts(const weather_t *forecasts, int n_forecasts) {
     u8g2_ClearBuffer(&u8g2);
 
+    int j;
+    for (j = 0; j < n_forecasts; ++j) {
+        struct tm *dt = gmtime(&forecasts[j].time);
+        if (dt->tm_hour < 15 && dt->tm_hour > 6) {
+            break;
+        }
+    }
+    if (n_forecasts - j < 3) return;
+
+    const weather_t *shift_forecasts = &forecasts[j];
     for (int i = 0; i < 3; ++i) {
-        oled_draw_forecast(2 + i*46, 0, &forecasts[i], i == 0);
+        oled_draw_forecast(2 + i*46, 0, &shift_forecasts[i], i == 0);
     }
 
     u8g2_SendBuffer(&u8g2);
@@ -209,7 +219,7 @@ void http_get_callback(char * response_body, int http_status,
     }
 
     if (http_status == HTTP_STATUS_DISCONNECT && forecast_count >= 3) {
-        oled_draw_forecasts(forecasts);
+        oled_draw_forecasts(forecasts, forecast_count);
     }
 }
 
