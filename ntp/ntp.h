@@ -8,7 +8,7 @@
 #ifndef __NTP_H__
 #define __NTP_H__
 
-#define NTP_TIMEOUT_MS 5000
+#include <time.h>
 
 typedef struct {
 	uint8 options;
@@ -24,6 +24,7 @@ typedef struct {
 	uint8 trans_time[8];
 } ntp_t;
 
-void ICACHE_FLASH_ATTR ntp_get_time();
+void ICACHE_FLASH_ATTR ntp_get_time(uint8_t *ntp_server,
+	void (*ntp_callback)(time_t timestamp, struct tm *dt));
 
 #endif

@@ -25,12 +25,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "u8g2.h"
 #include "u8g2_esp8266_hal.h"
 
+#include "ntp.h"
 #include "jsmn.h"
-
 #include "httpclient.h"
-
 #include "wifi_station.h"
 
+#include "util.h"
 #include "credentials.h"
 #include "my_config.h"
 
@@ -116,6 +116,21 @@ void http_get_callback(char * response_body, int http_status,
     }
 }
 
+void ntp_cb(time_t timestamp, struct tm *dt) {
+    os_printf("Got timestamp: %ld\n", timestamp);
+}
+
+void ntp_dns_cb(uint8_t *addr) {
+    if (addr == NULL) {
+        os_printf("Error resolving NTP server address\n");
+        return;
+    }
+
+    os_printf("Resolved address: %u.%u.%u.%u\n",
+        addr[0], addr[1], addr[2], addr[3]);
+    ntp_get_time(addr, ntp_cb);
+}
+
 char owmap_query[128];
 void wifi_connect_cb(bool connected) {
     if (connected) {
@@ -129,7 +144,9 @@ void wifi_connect_cb(bool connected) {
             "http://api.openweathermap.org/data/2.5/forecast?id=%s&appid=%s&units=metric",
             OWMAP_CITY_ID, OWMAP_API_KEY);
 
-        http_get_streaming(owmap_query, "", http_get_callback);  // Example domain for testing for now - this sends chunked responses
+        /* http_get_streaming(owmap_query, "", http_get_callback);  // Example domain for testing for now - this sends chunked responses */
+
+        dns_resolve("time.nist.gov", ntp_dns_cb);
     } else {
         os_printf("Connection failed\n");
         go_to_sleep();
