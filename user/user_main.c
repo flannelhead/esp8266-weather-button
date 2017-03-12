@@ -179,8 +179,18 @@ void http_get_callback(char * response_body, int http_status,
     }
 }
 
+char owmap_query[128];
 void ntp_cb(time_t timestamp, struct tm *dt) {
-    os_printf("Got timestamp: %ld\n", timestamp);
+    apply_tz(dt, TIMEZONE_OFFSET);
+    os_printf("Date %d.%d, time %d.%d\n",
+        dt->tm_mday, dt->tm_mon + 1, dt->tm_hour, dt->tm_min);
+
+    os_sprintf(owmap_query,
+        "http://api.openweathermap.org/data/2.5/forecast?id=%s&appid=%s&units=metric",
+        OWMAP_CITY_ID, OWMAP_API_KEY);
+
+    http_get_streaming(owmap_query, "", http_get_callback);  // Example domain for testing for now - this sends chunked responses
+
 }
 
 void ntp_dns_cb(uint8_t *addr) {
@@ -189,25 +199,14 @@ void ntp_dns_cb(uint8_t *addr) {
         return;
     }
 
-    os_printf("Resolved address: %u.%u.%u.%u\n",
-        addr[0], addr[1], addr[2], addr[3]);
     ntp_get_time(addr, ntp_cb);
 }
 
-char owmap_query[128];
 void wifi_connect_cb(bool connected) {
     if (connected) {
-        os_printf("Connection succeeded\n");
-
         os_timer_disarm(&timeout_timer);
         os_timer_setfn(&timeout_timer, (os_timer_func_t *)go_to_sleep, NULL);
         /* os_timer_arm(&timeout_timer, DATA_FETCH_TIMEOUT, false); */
-
-        os_sprintf(owmap_query,
-            "http://api.openweathermap.org/data/2.5/forecast?id=%s&appid=%s&units=metric",
-            OWMAP_CITY_ID, OWMAP_API_KEY);
-
-        http_get_streaming(owmap_query, "", http_get_callback);  // Example domain for testing for now - this sends chunked responses
 
         dns_resolve("time.nist.gov", ntp_dns_cb);
     } else {

@@ -34,11 +34,11 @@ void ICACHE_FLASH_ATTR dns_resolve(const char *hostname,
 
 // custom function to apply a timezone to the supplied tm struct
 // hard coded rules
-void ICACHE_FLASH_ATTR applyTZ(struct tm *time, int tz_offset) {
+void ICACHE_FLASH_ATTR apply_tz(struct tm *time, int tz_offset) {
     bool dst = false;
 
     // apply base timezone offset
-    //time->tm_hour += 1; // e.g. central europe
+    time->tm_hour += tz_offset;
 
     // call mktime to fix up (needed if applying offset has rolled the date back/forward a day)
     // also sets yday and fixes wday (if it was wrong from the rtc)
