@@ -54,7 +54,7 @@ void oled_init(void) {
     u8g2_ClearBuffer(&u8g2);
     u8g2_SetFontPosTop(&u8g2);
     u8g2_SetFont(&u8g2, u8g2_font_profont12_tf);
-    u8g2_DrawStr(&u8g2, 0, 0, "Hello World!");
+    u8g2_DrawUTF8(&u8g2, 0, 0, "Hyvää huomenta!");
     u8g2_SendBuffer(&u8g2);
 }
 
