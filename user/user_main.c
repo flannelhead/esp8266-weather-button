@@ -58,26 +58,91 @@ void oled_init(void) {
     u8g2_SendBuffer(&u8g2);
 }
 
+typedef enum {
+    ICON_NONE = 0,
+    CLEAR_SKY = 1,
+    FEW_CLOUDS = 2,
+    SCATTERED_CLOUDS = 3,
+    BROKEN_CLOUDS = 4,
+    SHOWER_RAIN = 9,
+    RAIN = 10,
+    THUNDERSTORM = 11,
+    SNOW = 13,
+    MIST = 50
+} weather_icon_t;
+
+char current_key[64];
+int array_level;
+int object_level;
+bool in_list;
+long dt;
+int temp;
+weather_icon_t icon;
+
 void start_arr(void) {
-    os_printf("Array started\n");
+    if (os_strcmp(current_key, "list") == 0) {
+        in_list = true;
+        array_level = 0;
+        object_level = 0;
+    }
+
+    array_level += 1;
 }
+
 void end_arr(void) {
-    os_printf("Array ended\n");
+    if (in_list && (--array_level) == 0) {
+        in_list = false;
+    }
 }
+
 void start_obj(void) {
-    os_printf("Object started\n");
+    if (!in_list) return;
+
+    if (object_level == 0) {
+        dt = 0;
+        temp = 0.0;
+        icon = ICON_NONE;
+    }
+
+    ++object_level;
 }
+
 void end_obj(void) {
-    os_printf("Object ended\n");
+    if (!in_list) return;
+
+    if ((--object_level) == 0) {
+        os_printf("Weather at %ld: temp = %d, icon = %d\n", dt, temp, icon);
+    }
 }
+
 void obj_key(const char *key, size_t key_len) {
-    os_printf("Object key: %s\n", key);
+    os_strcpy(current_key, key);
 }
+
 void str(const char *value, size_t len) {
-    os_printf("String: %s\n", value);
+    if (os_strcmp(current_key, "icon") == 0 && icon == ICON_NONE) {
+        icon = atoi(value);
+    }
 }
+
 void primitive(const char *value, size_t len) {
-    os_printf("Primitive: %s\n", value);
+    if (os_strcmp(current_key, "dt") == 0 && dt == 0) {
+        dt = atoi(value);
+    } else if (os_strcmp(current_key, "temp") == 0 && temp == 0) {
+        temp = atoi(value);
+        char *point = os_strchr(value, '.');
+        if (point != NULL && point - value > len && *(point + 1) >= '5') {
+            if (value[0] == '-') temp -= 1;
+            else temp += 1;
+        }
+    }
+}
+
+void init_weather_parser(void) {
+    current_key[0] = '\0';
+    array_level = 0;
+    object_level = 0;
+    in_list = true;
 }
 
 jsmn_callbacks_t cbs = {
@@ -98,13 +163,11 @@ void go_to_sleep(void) {
 
 void http_get_callback(char * response_body, int http_status,
     char * response_headers, int body_size) {
-    os_printf("HTTP status %d\n", http_status);
-
+    static int current_status = 0;
     if (response_headers != NULL) {
-        os_printf("Headers:\n%s\n", response_headers);
+        current_status = http_status;
     }
-
-    if (response_body != NULL) {
+    if (current_status == 200 && response_body != NULL) {
         char ch;
         while ((ch = *(response_body++)) != '\0') {
             jsmn_parse(&parser, ch);
@@ -112,7 +175,7 @@ void http_get_callback(char * response_body, int http_status,
     }
 
     if (http_status == HTTP_STATUS_DISCONNECT) {
-        go_to_sleep();
+        //go_to_sleep();
     }
 }
 
@@ -138,13 +201,13 @@ void wifi_connect_cb(bool connected) {
 
         os_timer_disarm(&timeout_timer);
         os_timer_setfn(&timeout_timer, (os_timer_func_t *)go_to_sleep, NULL);
-        os_timer_arm(&timeout_timer, DATA_FETCH_TIMEOUT, false);
+        /* os_timer_arm(&timeout_timer, DATA_FETCH_TIMEOUT, false); */
 
         os_sprintf(owmap_query,
             "http://api.openweathermap.org/data/2.5/forecast?id=%s&appid=%s&units=metric",
             OWMAP_CITY_ID, OWMAP_API_KEY);
 
-        /* http_get_streaming(owmap_query, "", http_get_callback);  // Example domain for testing for now - this sends chunked responses */
+        http_get_streaming(owmap_query, "", http_get_callback);  // Example domain for testing for now - this sends chunked responses
 
         dns_resolve("time.nist.gov", ntp_dns_cb);
     } else {
