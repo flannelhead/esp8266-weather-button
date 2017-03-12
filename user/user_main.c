@@ -30,6 +30,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "httpclient.h"
 #include "wifi_station.h"
 
+#include "images/icons_32.h"
 #include "util.h"
 #include "credentials.h"
 #include "my_config.h"
@@ -39,37 +40,63 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #define SLEEP_INTERVAL 5000
 
+#define FORECAST_MAX_COUNT 8
+
 os_timer_t timeout_timer;
 
 u8g2_t u8g2;
 jsmn_parser parser;
 
+typedef struct {
+    time_t time;
+    int temp;
+    weather_icon_t icon;
+} weather_t;
+
+void oled_draw_forecast(int x, int y, const weather_t *forecast,
+    bool draw_weekday) {
+    int dx;
+
+    u8g2_SetFontPosTop(&u8g2);
+
+    struct tm *dt = gmtime(&forecast->time);
+    char buf[32];
+    if (draw_weekday) {
+        os_sprintf(buf, "%s %02d", WEEKDAYS[dt->tm_wday], dt->tm_hour);
+    } else {
+        os_sprintf(buf, "%02d", dt->tm_hour);
+    }
+    dx = (32 - u8g2_GetUTF8Width(&u8g2, buf)) / 2;
+    u8g2_DrawUTF8(&u8g2, x + dx, y, buf);
+
+    const uint8_t *bitmap = get_icon_bitmap(forecast->icon);
+    if (bitmap != NULL) {
+        u8g2_DrawXBMP(&u8g2, x, y + 14, 32, 32, bitmap);
+    }
+
+    os_sprintf(buf, "%d°C", forecast->temp);
+    dx = (32 - u8g2_GetUTF8Width(&u8g2, buf)) / 2;
+    u8g2_DrawUTF8(&u8g2, x + dx, y + 52, buf);
+}
+
+void oled_draw_forecasts(const weather_t *forecasts) {
+    u8g2_ClearBuffer(&u8g2);
+
+    for (int i = 0; i < 3; ++i) {
+        oled_draw_forecast(2 + i*46, 0, &forecasts[i], i == 0);
+    }
+
+    u8g2_SendBuffer(&u8g2);
+}
+
 void oled_init(void) {
-    u8g2_Setup_ssd1306_128x64_noname_f(&u8g2, U8G2_R2,
+    u8g2_Setup_ssd1306_128x64_noname_f(&u8g2, U8G2_R0,
         u8x8_byte_esp8266_hw_spi,
         u8x8_gpio_and_delay_esp8266);  // init u8g2 structure
     u8g2_InitDisplay(&u8g2); // send init sequence to the display, display is in sleep mode after this,
     u8g2_SetPowerSave(&u8g2, 0); // wake up display
-
-    u8g2_ClearBuffer(&u8g2);
-    u8g2_SetFontPosTop(&u8g2);
     u8g2_SetFont(&u8g2, u8g2_font_profont12_tf);
-    u8g2_DrawUTF8(&u8g2, 0, 0, "Hyvää huomenta!");
-    u8g2_SendBuffer(&u8g2);
 }
-
-typedef enum {
-    ICON_NONE = 0,
-    CLEAR_SKY = 1,
-    FEW_CLOUDS = 2,
-    SCATTERED_CLOUDS = 3,
-    BROKEN_CLOUDS = 4,
-    SHOWER_RAIN = 9,
-    RAIN = 10,
-    THUNDERSTORM = 11,
-    SNOW = 13,
-    MIST = 50
-} weather_icon_t;
 
 char current_key[64];
 int array_level;
@@ -78,6 +105,8 @@ bool in_list;
 long dt;
 int temp;
 weather_icon_t icon;
+weather_t forecasts[FORECAST_MAX_COUNT];
+int forecast_count;
 
 void start_arr(void) {
     if (os_strcmp(current_key, "list") == 0) {
@@ -110,8 +139,11 @@ void start_obj(void) {
 void end_obj(void) {
     if (!in_list) return;
 
-    if ((--object_level) == 0) {
-        os_printf("Weather at %ld: temp = %d, icon = %d\n", dt, temp, icon);
+    if ((--object_level) == 0 && forecast_count < FORECAST_MAX_COUNT) {
+        forecasts[forecast_count].time = dt;
+        forecasts[forecast_count].temp = temp;
+        forecasts[forecast_count].icon = icon;
+        forecast_count += 1;
     }
 }
 
@@ -142,7 +174,8 @@ void init_weather_parser(void) {
     current_key[0] = '\0';
     array_level = 0;
     object_level = 0;
-    in_list = true;
+    in_list = false;
+    forecast_count = 0;
 }
 
 jsmn_callbacks_t cbs = {
@@ -174,8 +207,8 @@ void http_get_callback(char * response_body, int http_status,
         }
     }
 
-    if (http_status == HTTP_STATUS_DISCONNECT) {
-        //go_to_sleep();
+    if (http_status == HTTP_STATUS_DISCONNECT && forecast_count >= 3) {
+        oled_draw_forecasts(forecasts);
     }
 }
 
