@@ -96,6 +96,7 @@ void oled_init(void) {
     u8g2_InitDisplay(&u8g2); // send init sequence to the display, display is in sleep mode after this,
     u8g2_SetPowerSave(&u8g2, 0); // wake up display
     u8g2_SetFont(&u8g2, u8g2_font_profont12_tf);
+    u8g2_ClearDisplay(&u8g2);
 }
 
 char current_key[64];
