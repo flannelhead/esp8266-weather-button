@@ -30,8 +30,6 @@ static void ICACHE_FLASH_ATTR ntp_udp_recv(void *arg, char *pdata, unsigned shor
 	// create tm struct
 	dt = gmtime(&timestamp);
 
-	os_printf("timestamp: %ld\n", timestamp);
-
 	if (pCon->reverse != NULL) {
 		void (*ntp_callback)(time_t, struct tm *) = pCon->reverse;
 		ntp_callback(timestamp, dt);
