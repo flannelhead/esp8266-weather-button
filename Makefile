@@ -44,8 +44,8 @@ APPGEN		?= $(SDK_BASE)/tools/gen_appbin.py
 TARGET		= esp8266_binary
 
 # which modules (subdirectories) of the project to include in compiling
-MODULES		= user lib u8g2 esphttpclient jsmn
-EXTRA_INCDIR	= include $(SDK_BASE)/driver_lib/include u8g2 esphttpclient jsmn
+MODULES		= user lib u8g2 esphttpclient jsmn-stream ntp
+EXTRA_INCDIR	= include $(SDK_BASE)/driver_lib/include u8g2 esphttpclient jsmn-stream ntp
 
 # libraries used in this project, mainly provided by the SDK
 LIBS		= c gcc hal phy pp net80211 wpa main lwip crypto ssl driver
