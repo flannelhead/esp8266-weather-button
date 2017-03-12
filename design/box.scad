@@ -1,4 +1,4 @@
-shell_t = 2;
+shell_t = 1.2;
 inner_w = 50;
 inner_h = 35;
 inner_l = 15;
@@ -11,8 +11,9 @@ lcd_opening_x_margin = 5;
 
 lcd_pegs_span_x = 23.5;
 lcd_pegs_span_y = 24;
-lcd_pegs_d = 1.5;
+lcd_pegs_d = 1.2;
 lcd_pegs_h = 4 + shell_t;
+lcd_pegs_y_shift = 1.5;
 
 button_d = 6.5;
 button_x_margin = 5;
@@ -27,10 +28,11 @@ usb_slit_depth = 8;
 
 cage_inner_wx = 35;
 cage_inner_wy = 26.5;
-cage_h = 7;
-cage_t = 1.5;
+cage_h = 7.5;
+cage_t = 1.2;
 cage_claw_wy = 10;
 cage_claw_wx = 15;
+cage_claw_t = 2;
 
 tolerance = 0.5;
 
@@ -45,7 +47,9 @@ module box(width, height, length) {
 
 module box_shell() {
     difference() {
-        box(inner_w + 2*shell_t, inner_h + 2*shell_t, inner_l + shell_t);
+        translate([-shell_t, -shell_t, 0])
+        resize([inner_w + 2*shell_t, inner_h + 2*shell_t, 0]) 
+            box(inner_w, inner_h, inner_l + shell_t);
         translate([0, 0, -shell_t]) box(inner_w, inner_h, inner_l + shell_t);
     }
 }
@@ -90,13 +94,14 @@ module box_main() {
         usb_slit();
     }
     
-    translate([inner_w - lcd_opening_w/2 - lcd_opening_x_margin, inner_h / 2,
+    translate([inner_w - lcd_opening_w/2 - lcd_opening_x_margin,
+        inner_h / 2 + lcd_pegs_y_shift,
         inner_l - lcd_pegs_h + shell_t]) lcd_pegs();
 }
 
 module snap_tab() {
     tab_width = snap_slit_width - tolerance;
-    snap_tab_r = snap_slit_height / 2;
+    snap_tab_r = 0.7 * snap_slit_height / 2;
     translate([(inner_w - tab_width) / 2, 0, 0]) {
         cube([tab_width, shell_t, snap_slit_z + snap_tab_r]);
         translate([0, 0, snap_slit_z])
@@ -105,23 +110,27 @@ module snap_tab() {
 }
 
 module board_cage() {
-    translate([cage_t, 0, 0]) {
+    translate([cage_claw_t, 0, 0]) {
         cube([cage_inner_wx, cage_t, cage_h]);
         translate([0, cage_inner_wy + cage_t, 0]) cube([cage_inner_wx, cage_t, cage_h]);
     }
-    cube([cage_t, cage_inner_wy + 2*cage_t, cage_h]);
-    translate([0, cage_t + (cage_inner_wy - cage_claw_wy) / 2, cage_h - cage_t])
-        cube([cage_claw_wx, cage_claw_wy, cage_t]);
+    cube([cage_claw_t, cage_inner_wy + 2*cage_t, cage_h]);
+    translate([0, cage_t + (cage_inner_wy - cage_claw_wy) / 2, cage_h - cage_claw_t])
+        cube([cage_claw_wx, cage_claw_wy, cage_claw_t]);
+    translate([cage_claw_wx - 1.6, cage_t + (cage_inner_wy - cage_claw_wy) / 2, 0])
+        cube([0.8, cage_claw_wy, cage_h - cage_claw_t]);
 }
 
 module bottom_lid() {
     difference() {
         union() {
-            translate([0, 0, -shell_t]) box(inner_w + 2*shell_t, inner_h + 2*shell_t, shell_t);
+            translate([-shell_t, -shell_t, -shell_t])
+                resize([inner_w + 2*shell_t, inner_h + 2*shell_t, 0]) 
+                box(inner_w, inner_h, shell_t);
             snap_tab();
             translate([0, inner_h, 0]) mirror([0, 1, 0]) snap_tab();
             
-            translate([inner_w - (cage_inner_wx + cage_t),
+            translate([inner_w - (cage_inner_wx + cage_claw_t),
                 (inner_h - (cage_inner_wy + 2*cage_t)) / 2, 0]) board_cage();
         }
         usb_slit();
