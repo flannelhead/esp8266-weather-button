@@ -250,10 +250,12 @@ void http_get_callback(char * response_body, int http_status,
     if (http_status == HTTP_STATUS_DISCONNECT) {
         os_timer_disarm(&timeout_timer);
         uint32_t data_length = forecast_count;
-        uint32_t one = 1;
-        system_rtc_mem_write(64, &one, 4);
+        uint32_t flag = 0;
+        system_rtc_mem_write(64, &flag, 4);
         system_rtc_mem_write(65, &data_length, 4);
         system_rtc_mem_write(66, &forecasts, data_length * sizeof(weather_t));
+        flag = 1;
+        system_rtc_mem_write(64, &flag, 4);
         os_printf("Fetched %u forecasts\n", data_length);
         if (!idle_fetch) {
             system_os_post(USER_TASK_PRIO_1, 0, 0);
@@ -335,7 +337,7 @@ void user_init(void) {
     } else {
         uint32_t flag = 0;
         if (system_rtc_mem_read(64, &flag, 4) && flag == 1) {
-            os_printf("Displaying data directly for RTC...\n");
+            os_printf("Displaying data directly from RTC...\n");
             system_os_post(USER_TASK_PRIO_1, 0, 0);
         } else {
             os_printf("Going to display data, fetching first...\n");
