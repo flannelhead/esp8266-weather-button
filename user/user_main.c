@@ -35,10 +35,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "credentials.h"
 #include "my_config.h"
 
+// All below are milliseconds
 #define CONNECTION_TIMEOUT 10000
 #define DATA_FETCH_TIMEOUT 10000
-
-#define SLEEP_INTERVAL 5000
+#define SCREEN_TIMEOUT 5000
+#define DATA_FETCH_INTERVAL 10000 //(30*60000)
 
 #define FORECAST_MAX_COUNT 8
 
@@ -47,11 +48,15 @@ os_timer_t timeout_timer;
 u8g2_t u8g2;
 jsmn_parser parser;
 
+os_event_t queue[2];
+
 typedef struct {
     time_t time;
     int temp;
     weather_icon_t icon;
 } weather_t;
+
+void sleep_timeout(uint32_t timeout);
 
 void oled_draw_forecast(int x, int y, const weather_t *forecast,
     bool draw_weekday) {
@@ -82,28 +87,28 @@ void oled_draw_forecast(int x, int y, const weather_t *forecast,
 void oled_draw_forecasts(const weather_t *forecasts, int n_forecasts) {
     u8g2_ClearBuffer(&u8g2);
 
-    int j;
-    for (j = 0; j < n_forecasts; ++j) {
+    int j, c;
+    weather_t my_forecasts[3];
+    for (j = 0, c = 0; j < n_forecasts && c < 3; ++j) {
         struct tm *dt = gmtime(&forecasts[j].time);
-        if (dt->tm_hour < 15 && dt->tm_hour > 6) {
-            break;
+        if (dt->tm_hour <= 18 && dt->tm_hour >= 9) {
+            my_forecasts[c] = forecasts[j];
+            c += 1;
         }
     }
-    if (n_forecasts - j < 3) return;
+    if (c < 3) return;
 
-    const weather_t *shift_forecasts = &forecasts[j];
+    int prev_wday = 7;
     for (int i = 0; i < 3; ++i) {
-        oled_draw_forecast(2 + i*46, 0, &shift_forecasts[i], i == 0);
+        struct tm *dt = gmtime(&my_forecasts[i].time);
+        oled_draw_forecast(2 + i*46, 0, &my_forecasts[i], dt->tm_wday != prev_wday);
+        prev_wday = dt->tm_wday;
     }
 
     u8g2_SendBuffer(&u8g2);
 }
 
 void oled_init(void) {
-    u8g2_Setup_ssd1306_128x64_noname_f(&u8g2, U8G2_R0,
-        u8x8_byte_esp8266_hw_spi,
-        u8x8_gpio_and_delay_esp8266);  // init u8g2 structure
-    u8g2_InitDisplay(&u8g2); // send init sequence to the display, display is in sleep mode after this,
     u8g2_SetPowerSave(&u8g2, 0); // wake up display
     u8g2_SetFont(&u8g2, u8g2_font_profont12_tf);
     u8g2_ClearDisplay(&u8g2);
@@ -118,6 +123,20 @@ int temp;
 weather_icon_t icon;
 weather_t forecasts[FORECAST_MAX_COUNT];
 int forecast_count;
+bool idle_fetch;
+
+void forecast_display(os_event_t *e) {
+    // TODO just displaying, so put modem to sleep
+    uint32_t n_forecasts = 0;
+    if (system_rtc_mem_read(65, &n_forecasts, 4) && n_forecasts != 0) {
+        os_printf("Found %u forecasts\n", n_forecasts);
+        forecast_count = n_forecasts;
+        system_rtc_mem_read(66, forecasts, n_forecasts * sizeof(weather_t));
+    }
+    oled_init();
+    oled_draw_forecasts(forecasts, n_forecasts);
+    sleep_timeout(SCREEN_TIMEOUT);
+}
 
 void start_arr(void) {
     if (os_strcmp(current_key, "list") == 0) {
@@ -199,10 +218,20 @@ jsmn_callbacks_t cbs = {
     primitive
 };
 
-void go_to_sleep(void) {
-    os_printf("Going to sleep\n");
+void sleep_task(os_event_t *e) {
+    uint32_t sleep_timeout = e->par;
     u8g2_SetPowerSave(&u8g2, 1); // put display to sleep
-    system_deep_sleep(1000 * SLEEP_INTERVAL);
+    system_deep_sleep(1000 * sleep_timeout);
+}
+
+void go_to_sleep(uint32_t sleep_timeout) {
+    os_printf("Going to sleep, timeout = %u\n", sleep_timeout);
+    system_os_post(USER_TASK_PRIO_0, 0, sleep_timeout);
+}
+
+void sleep_timer_cb(void *arg) {
+    uint32_t *timeout = (uint32_t *)arg;
+    go_to_sleep(*timeout);
 }
 
 void http_get_callback(char * response_body, int http_status,
@@ -218,23 +247,36 @@ void http_get_callback(char * response_body, int http_status,
         }
     }
 
-    if (http_status == HTTP_STATUS_DISCONNECT && forecast_count >= 3) {
-        oled_draw_forecasts(forecasts, forecast_count);
+    if (http_status == HTTP_STATUS_DISCONNECT) {
+        os_timer_disarm(&timeout_timer);
+        uint32_t data_length = forecast_count;
+        uint32_t one = 1;
+        system_rtc_mem_write(64, &one, 4);
+        system_rtc_mem_write(65, &data_length, 4);
+        system_rtc_mem_write(66, &forecasts, data_length * sizeof(weather_t));
+        os_printf("Fetched %u forecasts\n", data_length);
+        if (!idle_fetch) {
+            system_os_post(USER_TASK_PRIO_1, 0, 0);
+        } else {
+            go_to_sleep(DATA_FETCH_INTERVAL);
+        }
     }
 }
 
 char owmap_query[128];
-void ntp_cb(time_t timestamp, struct tm *dt) {
-    apply_tz(dt, TIMEZONE_OFFSET);
-    os_printf("Date %d.%d, time %d.%d\n",
-        dt->tm_mday, dt->tm_mon + 1, dt->tm_hour, dt->tm_min);
-
+void do_owmap_query(void) {
     os_sprintf(owmap_query,
         "http://api.openweathermap.org/data/2.5/forecast?id=%s&appid=%s&units=metric",
         OWMAP_CITY_ID, OWMAP_API_KEY);
 
     http_get_streaming(owmap_query, "", http_get_callback);  // Example domain for testing for now - this sends chunked responses
+}
 
+void ntp_cb(time_t timestamp, struct tm *dt) {
+    apply_tz(dt, TIMEZONE_OFFSET);
+    os_printf("Date %d.%d, time %d.%d\n",
+        dt->tm_mday, dt->tm_mon + 1, dt->tm_hour, dt->tm_min);
+    do_owmap_query();
 }
 
 void ntp_dns_cb(uint8_t *addr) {
@@ -246,27 +288,59 @@ void ntp_dns_cb(uint8_t *addr) {
     ntp_get_time(addr, ntp_cb);
 }
 
+uint32_t data_fetch_interval = DATA_FETCH_INTERVAL;
+void sleep_timeout(uint32_t timeout) {
+    os_timer_disarm(&timeout_timer);
+    os_timer_setfn(&timeout_timer, (os_timer_func_t *)sleep_timer_cb,
+        &data_fetch_interval);
+    os_timer_arm(&timeout_timer, timeout, false);
+}
+
 void wifi_connect_cb(bool connected) {
     if (connected) {
-        os_timer_disarm(&timeout_timer);
-        os_timer_setfn(&timeout_timer, (os_timer_func_t *)go_to_sleep, NULL);
-        /* os_timer_arm(&timeout_timer, DATA_FETCH_TIMEOUT, false); */
-
-        dns_resolve("time.nist.gov", ntp_dns_cb);
+        sleep_timeout(DATA_FETCH_TIMEOUT);
+        //dns_resolve("time.nist.gov", ntp_dns_cb);
+        do_owmap_query();
     } else {
-        os_printf("Connection failed\n");
-        go_to_sleep();
+        go_to_sleep(DATA_FETCH_INTERVAL);
     }
+}
+
+void fetch_weather_data(void) {
+    wifi_station_init(WIFI_SSID, WIFI_PWD, wifi_connect_cb, CONNECTION_TIMEOUT);
 }
 
 void user_init(void) {
     system_update_cpu_freq(80);
     uart_init(BIT_RATE_115200, BIT_RATE_115200);
 
-    oled_init();
+    u8g2_Setup_ssd1306_128x64_noname_f(&u8g2, U8G2_R0,
+        u8x8_byte_esp8266_hw_spi,
+        u8x8_gpio_and_delay_esp8266);  // init u8g2 structure
+    u8g2_InitDisplay(&u8g2); // send init sequence to the display, display is in sleep mode after this
 
     jsmn_init(&parser, &cbs);
 
-    wifi_station_init(WIFI_SSID, WIFI_PWD, wifi_connect_cb, CONNECTION_TIMEOUT);
+    system_os_task(sleep_task, USER_TASK_PRIO_0, queue, 2);
+    system_os_task(forecast_display, USER_TASK_PRIO_1, queue, 2);
+
+    struct rst_info *rstinfo = system_get_rst_info();
+
+    idle_fetch = false;
+    os_printf("Reset reason: %u\n", rstinfo->reason);
+    if (rstinfo->reason == REASON_DEEP_SLEEP_AWAKE) {
+        idle_fetch = true;
+        os_printf("Doing idle fetch...\n");
+        fetch_weather_data();
+    } else {
+        uint32_t flag = 0;
+        if (system_rtc_mem_read(64, &flag, 4) && flag == 1) {
+            os_printf("Displaying data directly for RTC...\n");
+            system_os_post(USER_TASK_PRIO_1, 0, 0);
+        } else {
+            os_printf("Going to display data, fetching first...\n");
+            fetch_weather_data();
+        }
+    }
 }
 
