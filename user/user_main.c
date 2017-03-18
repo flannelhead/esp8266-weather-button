@@ -38,10 +38,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 // All below are milliseconds
 #define CONNECTION_TIMEOUT 10000
 #define DATA_FETCH_TIMEOUT 10000
-#define SCREEN_TIMEOUT 5000
-#define DATA_FETCH_INTERVAL 10000 //(30*60000)
+#define SCREEN_TIMEOUT 20000
+#define DATA_FETCH_INTERVAL (5*60000)
 
 #define FORECAST_MAX_COUNT 8
+
+#define MAGIC_NUM 0x55aaaa55
 
 os_timer_t timeout_timer;
 
@@ -131,7 +133,7 @@ void forecast_display(os_event_t *e) {
     if (system_rtc_mem_read(65, &n_forecasts, 4) && n_forecasts != 0) {
         os_printf("Found %u forecasts\n", n_forecasts);
         forecast_count = n_forecasts;
-        system_rtc_mem_read(66, forecasts, n_forecasts * sizeof(weather_t));
+        system_rtc_mem_read(67, forecasts, n_forecasts * sizeof(weather_t));
     }
     oled_init();
     oled_draw_forecasts(forecasts, n_forecasts);
@@ -253,8 +255,8 @@ void http_get_callback(char * response_body, int http_status,
         uint32_t flag = 0;
         system_rtc_mem_write(64, &flag, 4);
         system_rtc_mem_write(65, &data_length, 4);
-        system_rtc_mem_write(66, &forecasts, data_length * sizeof(weather_t));
-        flag = 1;
+        system_rtc_mem_write(67, &forecasts, data_length * sizeof(weather_t));
+        flag = MAGIC_NUM;
         system_rtc_mem_write(64, &flag, 4);
         os_printf("Fetched %u forecasts\n", data_length);
         if (!idle_fetch) {
@@ -313,6 +315,7 @@ void fetch_weather_data(void) {
 }
 
 void user_init(void) {
+    uint16_t adc = system_adc_read();
     system_update_cpu_freq(80);
     uart_init(BIT_RATE_115200, BIT_RATE_115200);
 
@@ -326,17 +329,15 @@ void user_init(void) {
     system_os_task(sleep_task, USER_TASK_PRIO_0, queue, 2);
     system_os_task(forecast_display, USER_TASK_PRIO_1, queue, 2);
 
-    struct rst_info *rstinfo = system_get_rst_info();
-
     idle_fetch = false;
-    os_printf("Reset reason: %u\n", rstinfo->reason);
-    if (rstinfo->reason == REASON_DEEP_SLEEP_AWAKE) {
+    if (adc > 850) {
+        // We've woken up to update the data
         idle_fetch = true;
         os_printf("Doing idle fetch...\n");
         fetch_weather_data();
     } else {
         uint32_t flag = 0;
-        if (system_rtc_mem_read(64, &flag, 4) && flag == 1) {
+        if (system_rtc_mem_read(64, &flag, 4) && flag == MAGIC_NUM) {
             os_printf("Displaying data directly from RTC...\n");
             system_os_post(USER_TASK_PRIO_1, 0, 0);
         } else {
