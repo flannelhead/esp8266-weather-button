@@ -53,7 +53,7 @@ LIBS		= c gcc phy pp net80211 wpa main lwip_open driver
 # compiler flags using during compilation of source files
 CFLAGS		= -Os -ggdb -std=gnu99 -Wpointer-arith -Wundef -Wall -Wl,-EL -fno-inline-functions \
 		-nostdlib -mlongcalls -mtext-section-literals  -D__ets__ \
-		-Wno-address -DESP8266 -DLWIP_OPEN_SRC -DPBUF_RSV_FOR_WLAN -DEBUF_LWIP -DLWIP_DEBUG=0 -ffunction-sections -fdata-sections
+		-Wno-address -DESP8266 -DLWIP_OPEN_SRC -ffunction-sections -fdata-sections
 
 # linker flags used to generate the main object file
 LDFLAGS		= -nostdlib -Wl,--no-check-sections -u call_user_start -Wl,--gc-sections -Wl,-static

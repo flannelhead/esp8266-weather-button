@@ -50,8 +50,6 @@ os_timer_t timeout_timer;
 u8g2_t u8g2;
 jsmn_parser parser;
 
-os_event_t queue[2];
-
 typedef struct {
     time_t time;
     int temp;
@@ -114,7 +112,6 @@ void oled_init(void) {
     u8g2_SetPowerSave(&u8g2, 0); // wake up display
     u8g2_SetFont(&u8g2, u8g2_font_profont12_tf);
     u8g2_ClearDisplay(&u8g2);
-    os_printf("Display cleared\n");
 }
 
 char current_key[64];
@@ -128,7 +125,7 @@ weather_t forecasts[FORECAST_MAX_COUNT];
 int forecast_count;
 bool idle_fetch;
 
-void forecast_display(os_event_t *e) {
+void forecast_display() {
     // TODO just displaying, so put modem to sleep
     uint32_t n_forecasts = 0;
     if (system_rtc_mem_read(65, &n_forecasts, 4) && n_forecasts != 0) {
@@ -221,15 +218,10 @@ jsmn_callbacks_t cbs = {
     primitive
 };
 
-void sleep_task(os_event_t *e) {
-    uint32_t sleep_timeout = e->par;
-    u8g2_SetPowerSave(&u8g2, 1); // put display to sleep
-    system_deep_sleep(1000 * sleep_timeout);
-}
-
 void go_to_sleep(uint32_t sleep_timeout) {
     os_printf("Going to sleep, timeout = %u\n", sleep_timeout);
-    system_os_post(USER_TASK_PRIO_0, 0, sleep_timeout);
+    u8g2_SetPowerSave(&u8g2, 1); // put display to sleep
+    system_deep_sleep(1000 * sleep_timeout);
 }
 
 void sleep_timer_cb(void *arg) {
@@ -262,7 +254,7 @@ void http_get_callback(char * response_body, int http_status,
         system_rtc_mem_write(64, &flag, 4);
         os_printf("Fetched %u forecasts\n", data_length);
         if (!idle_fetch) {
-            system_os_post(USER_TASK_PRIO_1, 0, 0);
+            forecast_display();
         } else {
             go_to_sleep(DATA_FETCH_INTERVAL);
         }
@@ -327,9 +319,6 @@ void user_init(void) {
         u8x8_gpio_and_delay_esp8266);  // init u8g2 structure
     u8g2_InitDisplay(&u8g2); // send init sequence to the display, display is in sleep mode after this
 
-    system_os_task(sleep_task, USER_TASK_PRIO_0, queue, 2);
-    system_os_task(forecast_display, USER_TASK_PRIO_1, queue, 2);
-
     idle_fetch = false;
     if (adc > 850) {
         // We've woken up to update the data
@@ -340,7 +329,7 @@ void user_init(void) {
         uint32_t flag = 0;
         if (system_rtc_mem_read(64, &flag, 4) && flag == MAGIC_NUM) {
             os_printf("Displaying data directly from RTC...\n");
-            system_os_post(USER_TASK_PRIO_1, 0, 0);
+            forecast_display();
         } else {
             os_printf("Going to display data, fetching first...\n");
             fetch_weather_data();
