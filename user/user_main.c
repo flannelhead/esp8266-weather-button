@@ -114,6 +114,7 @@ void oled_init(void) {
     u8g2_SetPowerSave(&u8g2, 0); // wake up display
     u8g2_SetFont(&u8g2, u8g2_font_profont12_tf);
     u8g2_ClearDisplay(&u8g2);
+    os_printf("Display cleared\n");
 }
 
 char current_key[64];
@@ -241,6 +242,7 @@ void http_get_callback(char * response_body, int http_status,
     static int current_status = 0;
     if (response_headers != NULL) {
         current_status = http_status;
+        jsmn_init(&parser, &cbs);
     }
     if (current_status == 200 && response_body != NULL) {
         char ch;
@@ -273,7 +275,7 @@ void do_owmap_query(void) {
         "http://api.openweathermap.org/data/2.5/forecast?id=%s&appid=%s&units=metric",
         OWMAP_CITY_ID, OWMAP_API_KEY);
 
-    http_get_streaming(owmap_query, "", http_get_callback);  // Example domain for testing for now - this sends chunked responses
+    http_get(owmap_query, "", http_get_callback);  // Example domain for testing for now - this sends chunked responses
 }
 
 void ntp_cb(time_t timestamp, struct tm *dt) {
@@ -319,12 +321,11 @@ void user_init(void) {
     system_update_cpu_freq(80);
     uart_init(BIT_RATE_115200, BIT_RATE_115200);
 
-    u8g2_Setup_ssd1306_128x64_noname_f(&u8g2, U8G2_R0,
-        u8x8_byte_esp8266_hw_spi,
+    u8g2_Setup_ssd1306_i2c_128x64_noname_f(&u8g2, U8G2_R0,
+        u8x8_byte_brzo_sw_i2c,
+        //u8x8_byte_sw_i2c,
         u8x8_gpio_and_delay_esp8266);  // init u8g2 structure
     u8g2_InitDisplay(&u8g2); // send init sequence to the display, display is in sleep mode after this
-
-    jsmn_init(&parser, &cbs);
 
     system_os_task(sleep_task, USER_TASK_PRIO_0, queue, 2);
     system_os_task(forecast_display, USER_TASK_PRIO_1, queue, 2);

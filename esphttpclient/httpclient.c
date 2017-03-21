@@ -11,14 +11,14 @@
 
 #include "osapi.h"
 #include "user_interface.h"
-#include "espconn.h"
 #include "mem.h"
 #include "limits.h"
+#include "lwip/tcp.h"
+#include "lwip/dns.h"
 #include "httpclient.h"
 
-
 // Debug output.
-#if 0
+#if 1
 #define PRINTF(...) os_printf(__VA_ARGS__)
 #else
 #define PRINTF(...)
@@ -44,8 +44,13 @@ typedef struct {
 	int current_chunk_size;
 	int buffer_allocated_size;
 	header_parse_state parse_state;
-	bool streaming;
 } request_args;
+
+int DEBUG_printf(const char *fmt, ...)
+{
+	/* Dummy DEBUG_printf required by the open source lwIP implementation */
+	return 0;
+}
 
 static char * ICACHE_FLASH_ATTR esp_strdup(const char * str)
 {
@@ -175,42 +180,7 @@ esp_strtol(const char *nptr, char **endptr, int base)
 	return (acc);
 }
 
-static int ICACHE_FLASH_ATTR chunked_decode(char * chunked, int size)
-{
-	char *src = chunked;
-	char *end = chunked + size;
-	int i, dst = 0;
-
-	do
-	{
-		//[chunk-size]
-		i = esp_strtol(src, (char **) NULL, 16);
-		PRINTF("Chunk Size:%d\r\n", i);
-		if (i <= 0) 
-			break;
-		//[chunk-size-end-ptr]
-		src = (char *)os_strstr(src, "\r\n") + 2;
-		//[chunk-data]
-		os_memmove(&chunked[dst], src, i);
-		src += i + 2; /* CRLF */
-		dst += i;
-	} while (src < end);
-
-	//
-	//footer CRLF
-	//
-
-	/* decoded size */
-	return dst;
-}
-
-static void ICACHE_FLASH_ATTR request_disconnect(struct espconn * conn,
-	bool is_secure) {
-	if (is_secure)
-		espconn_secure_disconnect(conn);
-	else
-		espconn_disconnect(conn);
-}
+static void disconnect_callback(void * arg);
 
 static bool ICACHE_FLASH_ATTR append_to_buffer(request_args * req,
 	char * data, unsigned short len) {
@@ -269,31 +239,25 @@ static bool ICACHE_FLASH_ATTR parse_header(const char * buffer,
 	return true;
 }
 
-static void ICACHE_FLASH_ATTR receive_callback_normal(void * arg, char * buf,
-	unsigned short len) {
-	struct espconn * conn = (struct espconn *)arg;
-	request_args * req = (request_args *)conn->reverse;
+static err_t ICACHE_FLASH_ATTR receive_callback(void * arg,
+	struct tcp_pcb * pcb, struct pbuf * p, err_t err) {
+	request_args * req = (request_args *)arg;
+
+	if (p == NULL) {
+		disconnect_callback(arg);
+		return ERR_OK;
+	}
+
+	char * buf = p->payload;
+	size_t len = p->len;
 
 	if (req->buffer == NULL) {
-		return;
+		goto success;
 	}
 
 	if (!append_to_buffer(req, buf, len)) {
-		request_disconnect(conn, req->secure);
-	}
-}
-
-static void ICACHE_FLASH_ATTR receive_callback_streaming(void * arg, char * buf,
-	unsigned short len) {
-	struct espconn * conn = (struct espconn *)arg;
-	request_args * req = (request_args *)conn->reverse;
-
-	if (req->buffer == NULL) {
-		return;
-	}
-
-	if (!append_to_buffer(req, buf, len)) {
-		request_disconnect(conn, req->secure);
+		tcp_close(pcb);
+		return ERR_MEM;
 	}
 
 	if (req->parse_state == PS_PARSING_HEADER) {
@@ -301,12 +265,14 @@ static void ICACHE_FLASH_ATTR receive_callback_streaming(void * arg, char * buf,
 		if (header_end == NULL) {
 			// Not ready to parse the header yet
 			PRINTF("partial header\n");
-			return;
+			goto success;
 		}
 		int http_status = 0;
 		bool is_chunked = false;
 		if (!parse_header(req->buffer, &http_status, &is_chunked, NULL)) {
-			request_disconnect(conn, req->secure);
+			tcp_recved(pcb, len);
+			tcp_close(pcb);
+			return ERR_MEM;
 		} else {
 			if (is_chunked) {
 				req->parse_state = PS_PARSING_CHUNKED_BODY;
@@ -338,7 +304,7 @@ static void ICACHE_FLASH_ATTR receive_callback_streaming(void * arg, char * buf,
 	}
 
 	if (req->user_callback == NULL) {
-		return;
+		goto success;
 	}
 
 	if (req->parse_state == PS_PARSING_CHUNKED_BODY) {
@@ -386,40 +352,43 @@ static void ICACHE_FLASH_ATTR receive_callback_streaming(void * arg, char * buf,
 		req->buffer[0] = '\0';
 		req->buffer_size = 1;
 	}
+
+success:
+	tcp_recved(pcb, len);
+	pbuf_free(p);
+	return ERR_OK;
 }
 
-static void ICACHE_FLASH_ATTR sent_callback(void * arg)
+static err_t ICACHE_FLASH_ATTR sent_callback(void * arg, struct tcp_pcb * pcb,
+	uint16_t len)
 {
-	struct espconn * conn = (struct espconn *)arg;
-	request_args * req = (request_args *)conn->reverse;
+	request_args * req = (request_args *)arg;
 
 	if (req->post_data == NULL) {
 		PRINTF("All sent\n");
+		tcp_sent(pcb, NULL);
 	}
 	else {
 		// The headers were sent, now send the contents.
 		PRINTF("Sending request body\n");
-		if (req->secure)
-			espconn_secure_sent(conn, (uint8_t *)req->post_data, strlen(req->post_data));
-		else
-			espconn_sent(conn, (uint8_t *)req->post_data, strlen(req->post_data));
+		tcp_write(pcb, (void *)req->post_data, strlen(req->post_data),
+			TCP_WRITE_FLAG_COPY);
+		tcp_output(pcb);
 		os_free(req->post_data);
 		req->post_data = NULL;
 	}
+
+	return ERR_OK;
 }
 
-static void ICACHE_FLASH_ATTR connect_callback(void * arg)
+static err_t ICACHE_FLASH_ATTR connect_callback(void * arg,
+	struct tcp_pcb * pcb, err_t err)
 {
 	PRINTF("Connected\n");
-	struct espconn * conn = (struct espconn *)arg;
-	request_args * req = (request_args *)conn->reverse;
+	request_args * req = (request_args *)arg;
 
-	if (req->streaming) {
-		espconn_regist_recvcb(conn, receive_callback_streaming);
-	} else {
-		espconn_regist_recvcb(conn, receive_callback_normal);
-	}
-	espconn_regist_sentcb(conn, sent_callback);
+	tcp_sent(pcb, sent_callback);
+	tcp_recv(pcb, receive_callback);
 
 	const char * method = "GET";
 	char post_headers[32] = "";
@@ -441,96 +410,41 @@ static void ICACHE_FLASH_ATTR connect_callback(void * arg)
 						 "\r\n",
 						 method, req->path, req->hostname, req->port, req->headers, post_headers);
 
-	if (req->secure)
-		espconn_secure_sent(conn, (uint8_t *)buf, len);
-	else
-		espconn_sent(conn, (uint8_t *)buf, len);
+	tcp_write(pcb, (void *)buf, len, TCP_WRITE_FLAG_COPY);
 	os_free(req->headers);
 	req->headers = NULL;
 	PRINTF("Sending request header\n");
+	return ERR_OK;
 }
 
-static void ICACHE_FLASH_ATTR do_cleanup(struct espconn * conn) {
-	if (conn->reverse != NULL) {
-		request_args * req = (request_args *)conn->reverse;
+static void ICACHE_FLASH_ATTR do_cleanup(void * arg) {
+	if (arg != NULL) {
+		request_args * req = (request_args *)arg;
 		os_free(req->buffer);
 		os_free(req->hostname);
 		os_free(req->path);
 		os_free(req);
 	}
-
-	espconn_delete(conn);
-	if(conn->proto.tcp != NULL) {
-		os_free(conn->proto.tcp);
-	}
-	os_free(conn);
 }
 
-static void ICACHE_FLASH_ATTR disconnect_callback_streaming(void * arg)
+static void ICACHE_FLASH_ATTR disconnect_callback(void * arg)
 {
 	PRINTF("Disconnected\n");
-	struct espconn *conn = (struct espconn *)arg;
 
-	if(conn == NULL) {
-		return;
-	}
-
-	if(conn->reverse != NULL) {
-		request_args * req = (request_args *)conn->reverse;
+	if(arg != NULL) {
+		request_args * req = (request_args *)arg;
 		if (req->user_callback != NULL) {
 			req->user_callback(NULL, HTTP_STATUS_DISCONNECT, NULL, 0);
 		}
 	}
 
-	do_cleanup(conn);
+	do_cleanup(arg);
 }
 
-static void ICACHE_FLASH_ATTR disconnect_callback_normal(void * arg)
-{
-	PRINTF("Disconnected\n");
-	struct espconn *conn = (struct espconn *)arg;
-
-	if(conn == NULL) {
-		return;
-	}
-
-	if(conn->reverse != NULL) {
-		request_args * req = (request_args *)conn->reverse;
-		int http_status = -1;
-		int body_size = 0;
-		char * body = "";
-		bool is_chunked = false;
-		if (req->buffer == NULL) {
-			os_printf("Buffer shouldn't be NULL\n");
-		} else if (req->buffer[0] != '\0' &&
-			parse_header(req->buffer, &http_status, &is_chunked, &body) &&
-			body != NULL) {
-			*body++ = '\0';
-			*body++ = '\0';
-			body_size = req->buffer_size - (body - req->buffer);
-			if (is_chunked) {
-				body_size = chunked_decode(body, body_size);
-			}
-		}
-
-		if (req->user_callback != NULL) { // Callback is optional.
-			req->user_callback(body, http_status, req->buffer, body_size);
-		}
-	}
-
-	do_cleanup(conn);
-}
-
-static void ICACHE_FLASH_ATTR error_callback_streaming(void *arg, sint8 errType)
+static void ICACHE_FLASH_ATTR error_callback(void *arg, sint8 errType)
 {
 	PRINTF("Disconnected with error\n");
-	disconnect_callback_streaming(arg);
-}
-
-static void ICACHE_FLASH_ATTR error_callback_normal(void *arg, sint8 errType)
-{
-	PRINTF("Disconnected with error\n");
-	disconnect_callback_normal(arg);
+	disconnect_callback(arg);
 }
 
 static void ICACHE_FLASH_ATTR dns_callback(const char * hostname, ip_addr_t * addr, void * arg)
@@ -552,35 +466,18 @@ static void ICACHE_FLASH_ATTR dns_callback(const char * hostname, ip_addr_t * ad
 	else {
 		PRINTF("DNS found %s " IPSTR "\n", hostname, IP2STR(addr));
 
-		struct espconn * conn = (struct espconn *)os_malloc(sizeof(struct espconn));
-		conn->type = ESPCONN_TCP;
-		conn->state = ESPCONN_NONE;
-		conn->proto.tcp = (esp_tcp *)os_malloc(sizeof(esp_tcp));
-		conn->proto.tcp->local_port = espconn_port();
-		conn->proto.tcp->remote_port = req->port;
-		conn->reverse = req;
-
-		os_memcpy(conn->proto.tcp->remote_ip, addr, 4);
-
-		espconn_regist_connectcb(conn, connect_callback);
-		if (req->streaming) {
-			espconn_regist_disconcb(conn, disconnect_callback_streaming);
-			espconn_regist_reconcb(conn, error_callback_streaming);
-		} else {
-			espconn_regist_disconcb(conn, disconnect_callback_normal);
-			espconn_regist_reconcb(conn, error_callback_normal);
+		struct tcp_pcb * pcb = tcp_new();
+		if (pcb == NULL) {
+			os_printf("Error allocating pcb\n");
 		}
+		tcp_arg(pcb, (void *)req);
 
-		if (req->secure) {
-			espconn_secure_set_size(ESPCONN_CLIENT,5120); // set SSL buffer size
-			espconn_secure_connect(conn);
-		} else {
-			espconn_connect(conn);
-		}
+		tcp_err(pcb, error_callback);
+		tcp_connect(pcb, addr, req->port, connect_callback);
 	}
 }
 
-static void ICACHE_FLASH_ATTR do_http_raw_request(const char * hostname, int port, bool secure, const char * path, const char * post_data, const char * headers, http_callback user_callback, bool streaming)
+static void ICACHE_FLASH_ATTR do_http_raw_request(const char * hostname, int port, bool secure, const char * path, const char * post_data, const char * headers, http_callback user_callback)
 {
 	PRINTF("DNS request\n");
 
@@ -598,39 +495,24 @@ static void ICACHE_FLASH_ATTR do_http_raw_request(const char * hostname, int por
 	req->user_callback = user_callback;
 	req->parse_state = PS_PARSING_HEADER;
 	req->current_chunk_size = 0;
-	req->streaming = streaming;
 
-	ip_addr_t addr;
-	err_t error = espconn_gethostbyname((struct espconn *)req, // It seems we don't need a real espconn pointer here.
-										hostname, &addr, dns_callback);
+	struct ip_addr addr;
+	err_t error = dns_gethostbyname(hostname, &addr, dns_callback, req);
 
-	if (error == ESPCONN_INPROGRESS) {
+	if (error == ERR_INPROGRESS) {
 		PRINTF("DNS pending\n");
 	}
-	else if (error == ESPCONN_OK) {
+	else if (error == ERR_OK) {
 		// Already in the local names table (or hostname was an IP address), execute the callback ourselves.
 		dns_callback(hostname, &addr, req);
-	}
-	else {
-		if (error == ESPCONN_ARG) {
-			os_printf("DNS arg error %s\n", hostname);
-		}
-		else {
-			os_printf("DNS error code %d\n", error);
-		}
-		dns_callback(hostname, NULL, req); // Handle all DNS errors the same way.
 	}
 }
 
 void ICACHE_FLASH_ATTR http_raw_request(const char * hostname, int port, bool secure, const char * path, const char * post_data, const char * headers, http_callback user_callback) {
-	do_http_raw_request(hostname, port, secure, path, post_data, headers, user_callback, false);
+	do_http_raw_request(hostname, port, secure, path, post_data, headers, user_callback);
 }
 
-void ICACHE_FLASH_ATTR http_raw_request_streaming(const char * hostname, int port, bool secure, const char * path, const char * post_data, const char * headers, http_callback user_callback) {
-	do_http_raw_request(hostname, port, secure, path, post_data, headers, user_callback, true);
-}
-
-static void ICACHE_FLASH_ATTR do_http_post(const char * url, const char * post_data, const char * headers, http_callback user_callback, bool streaming)
+static void ICACHE_FLASH_ATTR do_http_post(const char * url, const char * post_data, const char * headers, http_callback user_callback)
 {
 	// FIXME: handle HTTP auth with http://user:pass@host/
 	// FIXME: get rid of the #anchor part if present.
@@ -686,7 +568,7 @@ static void ICACHE_FLASH_ATTR do_http_post(const char * url, const char * post_d
 	PRINTF("hostname=%s\n", hostname);
 	PRINTF("port=%d\n", port);
 	PRINTF("path=%s\n", path);
-	do_http_raw_request(hostname, port, secure, path, post_data, headers, user_callback, streaming);
+	do_http_raw_request(hostname, port, secure, path, post_data, headers, user_callback);
 }
 
 /*
@@ -695,34 +577,15 @@ static void ICACHE_FLASH_ATTR do_http_post(const char * url, const char * post_d
  * <port> is optional
  */
 void ICACHE_FLASH_ATTR http_post(const char * url, const char * post_data, const char * headers, http_callback user_callback) {
-	do_http_post(url, post_data, headers, user_callback, false);
-}
-
-void ICACHE_FLASH_ATTR http_post_streaming(const char * url, const char * post_data, const char * headers, http_callback user_callback) {
-	do_http_post(url, post_data, headers, user_callback, true);
+	do_http_post(url, post_data, headers, user_callback);
 }
 
 void ICACHE_FLASH_ATTR http_get(const char * url, const char * headers, http_callback user_callback)
 {
-	do_http_post(url, NULL, headers, user_callback, false);
-}
-
-void ICACHE_FLASH_ATTR http_get_streaming(const char * url, const char * headers, http_callback user_callback)
-{
-	do_http_post(url, NULL, headers, user_callback, true);
+	do_http_post(url, NULL, headers, user_callback);
 }
 
 void ICACHE_FLASH_ATTR http_callback_example(char * response_body, int http_status, char * response_headers, int body_size)
-{
-	os_printf("http_status=%d\n", http_status);
-	if (http_status != HTTP_STATUS_GENERIC_ERROR) {
-		os_printf("strlen(headers)=%d\n", strlen(response_headers));
-		os_printf("body_size=%d\n", body_size);
-		os_printf("body=%s<EOF>\n", response_body); // FIXME: this does not handle binary data.
-	}
-}
-
-void ICACHE_FLASH_ATTR http_callback_example_streaming(char * response_body, int http_status, char * response_headers, int body_size)
 {
 	if (http_status > 0 && response_headers != NULL) {
 		os_printf("Received HTTP response with status %d and headers:\n%s\n",

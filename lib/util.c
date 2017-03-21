@@ -1,5 +1,6 @@
-#include <user_interface.h>
-#include <espconn.h>
+#include "user_interface.h"
+#include "lwip/err.h"
+#include "lwip/dns.h"
 
 #include "util.h"
 
@@ -16,11 +17,10 @@ static void ICACHE_FLASH_ATTR dns_found(const char *name, ip_addr_t *addr,
 void ICACHE_FLASH_ATTR dns_resolve(const char *hostname,
     void (*dns_callback)(uint8_t *ip)) {
     ip_addr_t addr;
-    err_t ret = espconn_gethostbyname((struct espconn *)dns_callback, hostname,
-        &addr, dns_found);
-    if (ret == ESPCONN_OK) {
+    err_t ret = dns_gethostbyname(hostname, &addr, dns_found, dns_callback);
+    if (ret == ERR_OK) {
         dns_callback((uint8_t *)(&addr.addr));
-    } else if (ret != ESPCONN_INPROGRESS) {
+    } else if (ret != ERR_INPROGRESS) {
         dns_callback(NULL);
     }
 }
@@ -93,3 +93,4 @@ void ICACHE_FLASH_ATTR apply_tz(struct tm *time, int tz_offset) {
         time->tm_isdst = 0;
     }
 }
+
