@@ -1,4 +1,4 @@
-// WIFI
+// WiFi
 const char WIFI_SSID[] = "insert SSID";
 const char WIFI_PWD[] = "insert PASSKEY";
 
