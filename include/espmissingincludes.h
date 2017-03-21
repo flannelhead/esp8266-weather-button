@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <c_types.h>
 
+#define ICACHE_RAM_ATTR __attribute__((section(".iram.text")))
 
 int strcasecmp(const char *a, const char *b);
 #ifndef FREERTOS

@@ -194,6 +194,7 @@ SECTIONS
     *(.init.literal)
     *(.init)
     *(.literal .text .literal.* .text.* .stub .gnu.warning .gnu.linkonce.literal.* .gnu.linkonce.t.*.literal .gnu.linkonce.t.*)
+    *esp8266_binary_app.a:(.iram.text)
     *(.fini.literal)
     *(.fini)
     *(.gnu.version)
