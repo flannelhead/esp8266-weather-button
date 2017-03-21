@@ -180,7 +180,29 @@ esp_strtol(const char *nptr, char **endptr, int base)
 	return (acc);
 }
 
-static void disconnect_callback(void * arg);
+static void ICACHE_FLASH_ATTR do_cleanup(void * arg) {
+	if (arg != NULL) {
+		request_args * req = (request_args *)arg;
+		os_free(req->buffer);
+		os_free(req->hostname);
+		os_free(req->path);
+		os_free(req);
+	}
+}
+
+static void ICACHE_FLASH_ATTR disconnect_callback(void * arg)
+{
+	PRINTF("Disconnected\n");
+
+	if(arg != NULL) {
+		request_args * req = (request_args *)arg;
+		if (req->user_callback != NULL) {
+			req->user_callback(NULL, HTTP_STATUS_DISCONNECT, NULL, 0);
+		}
+	}
+
+	do_cleanup(arg);
+}
 
 static bool ICACHE_FLASH_ATTR append_to_buffer(request_args * req,
 	char * data, unsigned short len) {
@@ -415,30 +437,6 @@ static err_t ICACHE_FLASH_ATTR connect_callback(void * arg,
 	req->headers = NULL;
 	PRINTF("Sending request header\n");
 	return ERR_OK;
-}
-
-static void ICACHE_FLASH_ATTR do_cleanup(void * arg) {
-	if (arg != NULL) {
-		request_args * req = (request_args *)arg;
-		os_free(req->buffer);
-		os_free(req->hostname);
-		os_free(req->path);
-		os_free(req);
-	}
-}
-
-static void ICACHE_FLASH_ATTR disconnect_callback(void * arg)
-{
-	PRINTF("Disconnected\n");
-
-	if(arg != NULL) {
-		request_args * req = (request_args *)arg;
-		if (req->user_callback != NULL) {
-			req->user_callback(NULL, HTTP_STATUS_DISCONNECT, NULL, 0);
-		}
-	}
-
-	do_cleanup(arg);
 }
 
 static void ICACHE_FLASH_ATTR error_callback(void *arg, sint8 errType)
