@@ -26,11 +26,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "u8g2_esp8266_hal.h"
 
 #include "ntp.h"
-#include "jsmn_stream.h"
 #include "httpclient.h"
 #include "wifi_station.h"
+#include "owmap_parser.h"
 
-#include "images/icons_32.h"
 #include "util.h"
 #include "credentials.h"
 #include "my_config.h"
@@ -48,13 +47,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 os_timer_t timeout_timer;
 
 u8g2_t u8g2;
-jsmn_stream_parser parser;
-
-typedef struct {
-    time_t time;
-    int temp;
-    weather_icon_t icon;
-} weather_t;
+weather_parser_t wparser;
+bool idle_fetch;
 
 void sleep_timeout(uint32_t timeout);
 
@@ -74,7 +68,7 @@ void oled_draw_forecast(int x, int y, const weather_t *forecast,
     dx = (32 - u8g2_GetUTF8Width(&u8g2, buf)) / 2;
     u8g2_DrawUTF8(&u8g2, x + dx, y, buf);
 
-    const uint8_t *bitmap = get_icon_bitmap(forecast->icon);
+    const uint8_t *bitmap = get_weather_icon_bitmap(forecast->icon);
     if (bitmap != NULL) {
         u8g2_DrawXBMP(&u8g2, x, y + 14, 32, 32, bitmap);
     }
@@ -114,109 +108,18 @@ void oled_init(void) {
     u8g2_ClearDisplay(&u8g2);
 }
 
-char current_key[64];
-int array_level;
-int object_level;
-bool in_list;
-long dt;
-int temp;
-weather_icon_t icon;
-weather_t forecasts[FORECAST_MAX_COUNT];
-int forecast_count;
-bool idle_fetch;
-
 void forecast_display() {
-    // TODO just displaying, so put modem to sleep
     uint32_t n_forecasts = 0;
     if (system_rtc_mem_read(65, &n_forecasts, 4) && n_forecasts != 0) {
         os_printf("Found %u forecasts\n", n_forecasts);
-        forecast_count = n_forecasts;
-        system_rtc_mem_read(67, forecasts, n_forecasts * sizeof(weather_t));
+        wparser.forecast_count = n_forecasts;
+        system_rtc_mem_read(67, wparser.forecasts,
+            n_forecasts * sizeof(weather_t));
     }
     oled_init();
-    oled_draw_forecasts(forecasts, n_forecasts);
+    oled_draw_forecasts(wparser.forecasts, n_forecasts);
     sleep_timeout(SCREEN_TIMEOUT);
 }
-
-void start_arr(void *user_arg) {
-    if (os_strcmp(current_key, "list") == 0) {
-        in_list = true;
-        array_level = 0;
-        object_level = 0;
-    }
-
-    array_level += 1;
-}
-
-void end_arr(void *user_arg) {
-    if (in_list && (--array_level) == 0) {
-        in_list = false;
-    }
-}
-
-void start_obj(void *user_arg) {
-    if (!in_list) return;
-
-    if (object_level == 0) {
-        dt = 0;
-        temp = 0.0;
-        icon = ICON_NONE;
-    }
-
-    ++object_level;
-}
-
-void end_obj(void *user_arg) {
-    if (!in_list) return;
-
-    if ((--object_level) == 0 && forecast_count < FORECAST_MAX_COUNT) {
-        forecasts[forecast_count].time = dt;
-        forecasts[forecast_count].temp = temp;
-        forecasts[forecast_count].icon = icon;
-        forecast_count += 1;
-    }
-}
-
-void obj_key(const char *key, size_t key_len, void *user_arg) {
-    os_strcpy(current_key, key);
-}
-
-void str(const char *value, size_t len, void *user_arg) {
-    if (os_strcmp(current_key, "icon") == 0 && icon == ICON_NONE) {
-        icon = atoi(value);
-    }
-}
-
-void primitive(const char *value, size_t len, void *user_arg) {
-    if (os_strcmp(current_key, "dt") == 0 && dt == 0) {
-        dt = atoi(value);
-    } else if (os_strcmp(current_key, "temp") == 0 && temp == 0) {
-        temp = atoi(value);
-        char *point = os_strchr(value, '.');
-        if (point != NULL && point - value > len && *(point + 1) >= '5') {
-            if (value[0] == '-') temp -= 1;
-            else temp += 1;
-        }
-    }
-}
-
-void init_weather_parser(void) {
-    current_key[0] = '\0';
-    array_level = 0;
-    object_level = 0;
-    in_list = false;
-    forecast_count = 0;
-}
-
-jsmn_stream_callbacks_t cbs = {
-    start_arr,
-    end_arr,
-    start_obj,
-    end_obj,
-    obj_key,
-    str,
-    primitive
-};
 
 void go_to_sleep(uint32_t sleep_timeout) {
     os_printf("Going to sleep, timeout = %u\n", sleep_timeout);
@@ -234,22 +137,22 @@ void http_get_callback(char * response_body, int http_status,
     static int current_status = 0;
     if (response_headers != NULL) {
         current_status = http_status;
-        jsmn_stream_init(&parser, &cbs, NULL);
+        weather_parser_init(&wparser);
     }
     if (current_status == 200 && response_body != NULL) {
         char ch;
         while ((ch = *(response_body++)) != '\0') {
-            jsmn_stream_parse(&parser, ch);
+            weather_stream_parse(&wparser, ch);
         }
     }
 
     if (http_status == HTTP_STATUS_DISCONNECT) {
         os_timer_disarm(&timeout_timer);
-        uint32_t data_length = forecast_count;
+        uint32_t data_length = wparser.forecast_count;
         uint32_t flag = 0;
         system_rtc_mem_write(64, &flag, 4);
         system_rtc_mem_write(65, &data_length, 4);
-        system_rtc_mem_write(67, &forecasts, data_length * sizeof(weather_t));
+        system_rtc_mem_write(67, wparser.forecasts, data_length * sizeof(weather_t));
         flag = MAGIC_NUM;
         system_rtc_mem_write(64, &flag, 4);
         os_printf("Fetched %u forecasts\n", data_length);
