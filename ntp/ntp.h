@@ -3,6 +3,8 @@
 // Copyright 2015 Richard A Burton
 // richardaburton@gmail.com
 // See license.txt for license terms.
+//
+// Modified by Sakari Kapanen in 2017.
 //////////////////////////////////////////////////
 
 #ifndef __NTP_H__
